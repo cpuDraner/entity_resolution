@@ -1,1 +1,2 @@
 #Entity Resolution
+Entity Resolution is a use of machine learning that links together records that may be written ambiguously. It can also be refered to as the 'phonebook problem', as a good example of using record linkage is finding typos between two sets of names across two different phonebooks. 

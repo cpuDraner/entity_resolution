@@ -1,9 +1,11 @@
 import gzip
-import pandas as pd
 import xml.etree.ElementTree as ET
-#from datetime import datetime
 
-class Articles():
+import pandas as pd
+import sqlalchemy
+
+
+class Articles:
     def __init__(self, path: str):
         """Read in a pubmed articles XML file that is gzipped
 
@@ -20,13 +22,13 @@ class Articles():
         authors = []
         # One trick for creating a dataframe is to create a list of
         # dicts with the same naming format
-        with gzip.open(path, 'rb') as fp:
+        with gzip.open(path, "rb") as fp:
             # _ means throw it away
             # for test in ET.iterparse(fp, events=('end',)):
             # test = (index, value itself)
 
-            for _, article in ET.iterparse(fp, events=('end',)):
-                if article.tag == 'PubmedArticle':
+            for _, article in ET.iterparse(fp, events=("end",)):
+                if article.tag == "PubmedArticle":
                     article_row, article_authors = self._parse_article(article)
                     articles.append(article_row)
                     authors.extend(article_authors)  # be careful extend vs append
@@ -37,12 +39,19 @@ class Articles():
         self.article_df = pd.DataFrame(articles)
         self.author_df = pd.DataFrame(authors)
 
-
-
     def _parse_article(self, article: ET.Element):
         """Parse an XML PubmedArticle element"""
         row = {}
-        tags = ['PMID', 'ArticleTitle', 'DateCompleted', 'Affiliation']
+        tags = [
+            "PMID",
+            "ArticleTitle",
+            "PubDate",
+            "DateCompleted",
+            "Affiliation",
+            "Year",
+            "Month",
+            "Day",
+        ]
         # <PubDate>
         #   <Year>2001</Year>
         #   <Month>2</Month>
@@ -52,53 +61,91 @@ class Articles():
         # </PubDate>
         for el in article.iter():
             if el.tag in tags:
+                if el.tag.find("Date") > -1:
+                    # Added after homework
+                    # ====================
+                    for el2 in el.iter():
+                        if el2.tag in tags:
+                            row[el2.tag] = el2.text
+                    # ====================
                 row[el.tag] = el.text
                 # <LastName>Bettcher</LastName>
                 # el.text pulls out what's INSIDE the pair of tags
                 # el.tag is the name of the tag
                 # remember that a tag is combination of a start and end
                 # <el.tag></el.tag>
-            elif el.tag=='PubDate':
-                day='' #If a day, month, or year isn't provided, it isn't used.
-                month=''
-                year=''
-                for time in el:
-                    if time.tag=='Year':
-                        year=time.text
-                    elif time.tag=='Month':
-                        month=time.text
-                    elif time.tag=='Day':
-                        day=time.text
-                #row['PubDate']=datetime.strptime(month+'/'+day+'/'+year,'%b/%d/%Y')
-                #doesn't work because the content is inconsistent ):
-                row['PubDate']=f'{month}/{day}/{year}'
-            
 
-        if 'PMID' not in row.keys():
+        if "PMID" not in row.keys():
             return {}, {}
-        
+
         # In XML, strictly speaking, there's no rule about order
         # <AuthorList></AuthorList><PMID></PMID>
         # <PMID></PMID><AuthorList></AuthorList>
         authors = []
-        tags = ['LastName', 'ForeName', 'Initials', 'Affiliation']
-        for author in article.findall('.//Author'):
-            auth_row = {'PMID': row['PMID']}
+        tags = ["LastName", "ForeName", "Initials", "Affiliation"]
+        for author in article.findall(".//Author"):
+            auth_row = {"PMID": row["PMID"]}
             for el in author.iter():
                 if el.tag in tags:
-                    auth_row[el.tag] = el.text
+                    auth_row[el.tag] = el.text.lower().strip()
             authors.append(auth_row)
-        
+
         return row, authors
-    
+
     def get_authors(self):
         """Get parsed grants"""
-        return self.author_df     
-    
+        return self.author_df.rename(
+            columns={
+                "LastName": "surname",
+                "ForeName": "forename",
+                "Initials": "initials",
+                "Affiliation": "affiliation",
+                "PMID": "pmid",
+            }
+        )
+
     def get_entries(self):
         """Get parsed articles"""
         return self.article_df
-    
 
-if __name__ == '__main__':
-    articles = Articles('data/pubmed25n1275.xml.gz')
+    # ---------------------
+    # ADDED AFTER HOMEWORK
+
+    def to_db(self, path: str = "data/article_grant_db.sqlite"):
+        """Send the read-in data to the database
+
+        Args:
+            path (str, optional): Location of sqlite file.
+                Defaults to 'data/article_grant_db.sqlite'.
+        """
+        # Define the connection
+        engine = sqlalchemy.create_engine("sqlite:///data/article_grant_db.sqlite")
+        connection = engine.connect()
+
+        # Always append. Deletion should be more thoughtful
+        # NEVER alter raw data.
+        # Pandas has its own index. That is different from the primary key.
+        # If you want, you can use the primary key as an index. I don't.
+        # It's complicated.
+
+        self.article_df[["PMID", "ArticleTitle"]].rename(
+            columns={"PMID": "pmid", "ArticleTitle": "title"}
+        ).dropna().to_sql("articles", connection, if_exists="append", index=False)
+        self.get_authors().dropna(subset=["pmid", "surname"]).to_sql(
+            "authors", connection, if_exists="append", index=False
+        )
+
+    def batch_from_db(self):
+        """Load the data from the database"""
+        engine = sqlalchemy.create_engine("sqlite:///data/article_grant_db.sqlite")
+        connection = engine.connect()
+        return pd.read_sql(
+            f"SELECT id, forename, surname, affiliation FROM authors",
+            connection,
+            chunksize=100,
+        )
+
+
+if __name__ == "__main__":
+    articles = Articles("data/pubmed25n1275.xml.gz")
+    articles.to_db()
