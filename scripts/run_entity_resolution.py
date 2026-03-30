@@ -2,9 +2,9 @@ import networkx as nx
 import pandas as pd
 import sqlalchemy
 
-from dtsc330_26 import entity_resolution_features, grantee_nn_idx
-from dtsc330_26.classifiers import entity_resolution_classifier
-from dtsc330_26.readers import articles, grants
+from entity_resolution import entity_resolution_features, grantee_nn_idx
+from entity_resolution.classifiers import entity_resolution_classifier
+from entity_resolution.readers import articles, grants
 
 eres_features = entity_resolution_features.EntityResolutionFeatures()
 classifier = entity_resolution_classifier.EntityResolutionClassifier()
